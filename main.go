@@ -9,19 +9,23 @@ import (
 
 func main() {
 	router := mux.NewRouter()
-	userRouter := router.PathPrefix("/user").Subrouter()
+	userRouter := router.PathPrefix("/user").Subrouter() // user sub-router
+
+	//    /user subroutes
 	userRouter.HandleFunc("/signup", UserSignup).Methods("POST")
 	userRouter.HandleFunc("/login", UserLogin).Methods("POST")
 	userRouter.HandleFunc("/courses", SeeAllCourse).Methods("GET")
 	userRouter.HandleFunc("/purchase", PurchaseCourse).Methods("POST")
 	userRouter.HandleFunc("/purchases-courses", SeeAllPurchasesCourse).Methods("GET")
 
-	adminRouter := router.PathPrefix("/admin").Subrouter()
+	adminRouter := router.PathPrefix("/admin").Subrouter() // admin sub-router
+
+	//   /admin subroutes
 	adminRouter.HandleFunc("/signup", AdminSignup).Methods("POST")
 	adminRouter.HandleFunc("/login", AdminLogin).Methods("POST")
 	adminRouter.HandleFunc("/create", CreateCourse).Methods("POST")
 	adminRouter.HandleFunc("/delete", DeleteCourse).Methods("DELETE")
-	adminRouter.HandleFunc("/add", AddCourse).Methods("POST")
+	adminRouter.HandleFunc("/add", AddCourseContent).Methods("POST")
 
 	fmt.Println("Starting the server at port 8000")
 	err := http.ListenAndServe(":8000", router)
@@ -30,6 +34,7 @@ func main() {
 	}
 }
 
+// User Handlers
 func UserSignup(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "User Signup")
 }
@@ -46,6 +51,7 @@ func SeeAllPurchasesCourse(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Your Purchased Courses")
 }
 
+// Admin Handlers
 func AdminSignup(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Admin Singup")
 }
@@ -58,6 +64,6 @@ func CreateCourse(w http.ResponseWriter, r *http.Request) {
 func DeleteCourse(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Course Deleted")
 }
-func AddCourse(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "Course Added")
+func AddCourseContent(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintln(w, "Course Content Added")
 }
