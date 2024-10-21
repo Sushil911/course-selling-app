@@ -41,6 +41,27 @@ func main() {
 
 	fmt.Println("Successfully connected to the database")
 
+	type User struct {
+		Username string `validate:"required, min=3,max 255"`
+		Password string `validate:"required, min=8"`
+		Email    string `validate:"required, email"`
+	}
+	type Admin struct {
+		Username string `validate:"required, min=3, max=255"`
+		Password string `validate:"required, min=8"`
+		Email    string `validate:"required,email"`
+	}
+	type Course struct {
+		Title       string `validate:"required, min=10, max=255"`
+		Description string `validate:"required, min=100, max=2500"`
+		Image_link  string `validate:"omitempty, url"`
+		AdminID     int    `validate:"required"`
+	}
+	type Purchase struct {
+		UserID   int `validate:"required"`
+		CourseID int `validate:"required"`
+	}
+
 	router := mux.NewRouter()
 	userRouter := router.PathPrefix("/user").Subrouter() // user sub-router
 
