@@ -7,17 +7,24 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 )
 
-var validate *validator.Validate // Extracting validator
+// Extracting validator
+var validate *validator.Validate
 var db *sql.DB
 
+// Importing jwt_secret from .env file
+var jwtSecret = []byte(os.Getenv("JWT_SECRET"))
+
+// Structs to validate values of User, Admin, Course, Purchase before inserting into database
 type User struct {
 	Username string `validate:"required,min=3,max=255"`
 	Password string `validate:"required,min=8"`
@@ -39,8 +46,15 @@ type Purchase struct {
 	CourseID int `validate:"required"`
 }
 
+// main function
 func main() {
-	validate = validator.New() // Initializing new validator
+
+	// Checking if the length of jwt secret is 0 or not
+	if len(jwtSecret) == 0 {
+		log.Fatal("JWT_SECRET environment variabe is not set")
+	}
+
+	validate = validator.New() // Initializing new instance of validator
 
 	// Loading environment variables from .env file
 	err := godotenv.Load()
@@ -48,6 +62,7 @@ func main() {
 		log.Fatalf("Error loading environment variables: %v", err)
 	}
 
+	// Making connection string to connect with database
 	connStr := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		os.Getenv("DB_HOST"),
@@ -57,6 +72,7 @@ func main() {
 		os.Getenv("DB_NAME"),
 	)
 
+	// Connecting to database with the conncetion string made with confidential database credentials
 	db, err = sql.Open("postgres", connStr)
 	if err != nil {
 		log.Fatalf("Error opening database: %v\n", err)
@@ -98,11 +114,16 @@ func main() {
 
 // User Handlers
 func UserSignup(w http.ResponseWriter, r *http.Request) {
+	// creating instance of the User struct
 	var user User
+
+	// decoding the JSON values from the client side in the form of user struct defined above
 	err := json.NewDecoder(r.Body).Decode(&user)
 	if err != nil {
 		http.Error(w, "Invalid input", http.StatusBadRequest)
 	}
+
+	// validating the values of the user struct according to the validation constraints provided in the struct
 	err = validate.Struct(user)
 	if err != nil {
 		for _, err := range err.(validator.ValidationErrors) {
@@ -126,6 +147,15 @@ func UserSignup(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Fprintln(w, "User signed successfully")
 
+	// generate JWT token after successful signup
+	token, err := GenerateJWT(user.Username, "user")
+	if err != nil {
+		http.Error(w, "Error generating JWT", http.StatusInternalServerError)
+	}
+
+	// Encode the JWT token and send it to the client side for further future authentication
+	json.NewEncoder(w).Encode(map[string]string{"token": token})
+
 }
 func UserLogin(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "User Login")
@@ -142,11 +172,16 @@ func SeeAllPurchasesCourse(w http.ResponseWriter, r *http.Request) {
 
 // Admin Handlers
 func AdminSignup(w http.ResponseWriter, r *http.Request) {
+	// creating instance of Admin struct
 	var admin Admin
+
+	// Decoding the JSON values from client side in the form of admin struct defined above
 	err := json.NewDecoder(r.Body).Decode(&admin)
 	if err != nil {
 		http.Error(w, "Error", http.StatusBadRequest)
 	}
+
+	// validating the admin struct based on the validation constraints provided in the struct
 	err = validate.Struct(admin)
 	if err != nil {
 		for _, err := range err.(validator.ValidationErrors) {
@@ -154,28 +189,43 @@ func AdminSignup(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	// hashing the password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(admin.Password), bcrypt.DefaultCost)
 	if err != nil {
 		http.Error(w, "Error hashing password", http.StatusInternalServerError)
 		return
 	}
+
+	// inserting validated admin in the database
 	query := `INSERT INTO admin(username,email,password_hash) VALUES($1,$2,$3)`
 	_, err = db.Exec(query, admin.Username, admin.Email, hashedPassword)
 	if err != nil {
 		http.Error(w, "Error inserting user", http.StatusInternalServerError)
 		return
 	}
-	fmt.Fprintln(w, "User signed up successfully")
+	fmt.Fprintln(w, "Admin signed up successfully")
+
+	token, err := GenerateJWT(admin.Username, "admin")
+	if err != nil {
+		http.Error(w, "Error generating jwt", http.StatusInternalServerError)
+	}
+	json.NewEncoder(w).Encode(map[string]string{"token": token})
 }
 func AdminLogin(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Admin Login")
 }
 func CreateCourse(w http.ResponseWriter, r *http.Request) {
+	// creating instance of Course struct
 	var course Course
+
+	// decoding JSON values from the client side in the form of course struct defined above
 	err := json.NewDecoder(r.Body).Decode(&course)
 	if err != nil {
 		http.Error(w, "Error while decoding", http.StatusBadRequest)
 	}
+
+	// validating values of course struct based on validation constrainsts provided in the same struct
 	err = validate.Struct(course)
 	if err != nil {
 		for _, err := range err.(validator.ValidationErrors) {
@@ -183,8 +233,10 @@ func CreateCourse(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	query := `INSERT INTO courses(title,description,image_link,admin_id) VALUES($1,$2,$3,$4)`
-	_, err = db.Exec(query, course.Title, course.Description, course.Image_link, course.AdminID)
+
+	// inserting validated course in the database
+	query := `INSERT INTO courses(title,description,image_link,admin_id) VALUES($1,$2,$3,$4)`    // creating the SQL query
+	_, err = db.Exec(query, course.Title, course.Description, course.Image_link, course.AdminID) // executing SQL query with db.Exec()
 	if err != nil {
 		http.Error(w, "Error inserting user", http.StatusInternalServerError)
 		return
@@ -196,4 +248,22 @@ func DeleteCourse(w http.ResponseWriter, r *http.Request) {
 }
 func AddCourseContent(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Course Content Added")
+}
+
+func GenerateJWT(username, role string) (string, error) {
+	claims := jwt.MapClaims{
+		"username": username,
+		"role":     role,
+		"exp":      time.Now().Add(time.Hour * 72).Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(jwtSecret)
+	if err != nil {
+		return "", err
+	}
+	return tokenString, nil
+}
+
+func verifyJWT() {
+	// do thi tomorrow
 }
