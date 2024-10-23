@@ -2,67 +2,106 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/go-playground/validator/v10"
+	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// Extracting validator
-var validate *validator.Validate
 var db *sql.DB
 
-// Importing jwt_secret from .env file
-var jwtSecret = []byte(os.Getenv("JWT_SECRET"))
+// Load JWT secret from .env file
+var jwtSecret []byte
 
-// Structs to validate values of User, Admin, Course, Purchase before inserting into database
+// Structs for validation and binding
 type User struct {
-	Username string `validate:"required,min=3,max=255"`
-	Password string `validate:"required,min=8"`
-	Email    string `validate:"required,email"`
+	Username string `json:"username" binding:"required,min=3,max=255"`
+	Password string `json:"password" binding:"required,min=8"`
+	Email    string `json:"email" binding:"required,email"`
 }
+
 type Admin struct {
-	Username string `validate:"required,min=3, max=255"`
-	Password string `validate:"required,min=8"`
-	Email    string `validate:"required,email"`
+	Username string `json:"username" binding:"required,min=3,max=255"`
+	Password string `json:"password" binding:"required,min=8"`
+	Email    string `json:"email" binding:"required,email"`
 }
+
 type Course struct {
-	Title       string `validate:"required,min=10,max=255"`
-	Description string `validate:"required,min=100,max=2500"`
-	Image_link  string `validate:"omitempty,url"`
-	AdminID     int    `validate:"required"`
+	Title       string `json:"title" binding:"required,min=10,max=255"`
+	Description string `json:"description" binding:"required,min=100,max=2500"`
+	ImageLink   string `json:"image_link" binding:"omitempty,url"`
+	AdminID     int    `json:"admin_id" binding:"required"`
 }
+
 type Purchase struct {
-	UserID   int `validate:"required"`
-	CourseID int `validate:"required"`
+	UserID   int `json:"user_id" binding:"required"`
+	CourseID int `json:"course_id" binding:"required"`
 }
 
-// main function
+// Main function
 func main() {
-
-	// Checking if the length of jwt secret is 0 or not
-	if len(jwtSecret) == 0 {
-		log.Fatal("JWT_SECRET environment variabe is not set")
-	}
-
-	validate = validator.New() // Initializing new instance of validator
-
-	// Loading environment variables from .env file
-	err := godotenv.Load()
-	if err != nil {
+	if err := loadEnv(); err != nil {
 		log.Fatalf("Error loading environment variables: %v", err)
 	}
 
-	// Making connection string to connect with database
+	var err error
+	db, err = initDB()
+	if err != nil {
+		log.Fatalf("Error connecting to the database: %v", err)
+	}
+	defer db.Close()
+
+	r := gin.Default()
+
+	// User routes
+	userGroup := r.Group("/user")
+	{
+		userGroup.POST("/signup", UserSignup)
+		userGroup.POST("/login", UserLogin)
+		userGroup.GET("/courses", SeeAllCourse)
+		userGroup.POST("/purchase", PurchaseCourse)
+		userGroup.GET("/purchases-courses", SeeAllPurchasesCourse)
+	}
+
+	// Admin routes
+	adminGroup := r.Group("/admin")
+	{
+		adminGroup.POST("/signup", AdminSignup)
+		adminGroup.POST("/login", AdminLogin)
+		adminGroup.POST("/create", CreateCourse)
+		adminGroup.DELETE("/delete", DeleteCourse)
+		adminGroup.POST("/add", AddCourseContent)
+	}
+
+	// Protecting admin and user routes
+	adminGroup.Use(verifyJWT("admin"))
+	userGroup.Use(verifyJWT("user"))
+
+	fmt.Println("Starting the server at port 8080")
+	if err := r.Run(":8080"); err != nil {
+		log.Fatalf("Error while starting the server: %v", err)
+	}
+}
+
+// Load environment variables
+func loadEnv() error {
+	err := godotenv.Load()
+	if err != nil {
+		return err
+	}
+	jwtSecret = []byte(os.Getenv("JWT_SECRET"))
+	return nil
+}
+
+// Initialize database connection
+func initDB() (*sql.DB, error) {
 	connStr := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		os.Getenv("DB_HOST"),
@@ -72,198 +111,175 @@ func main() {
 		os.Getenv("DB_NAME"),
 	)
 
-	// Connecting to database with the conncetion string made with confidential database credentials
-	db, err = sql.Open("postgres", connStr)
+	db, err := sql.Open("postgres", connStr)
 	if err != nil {
-		log.Fatalf("Error opening database: %v\n", err)
+		return nil, err
 	}
-	defer db.Close()
 
-	err = db.Ping()
-	if err != nil {
-		log.Fatalf("Error: %v", err)
+	if err = db.Ping(); err != nil {
+		return nil, err
 	}
 
 	fmt.Println("Successfully connected to the database")
+	return db, nil
+}
 
-	router := mux.NewRouter()
-	userRouter := router.PathPrefix("/user").Subrouter() // user sub-router
+// JWT Verification Middleware
+func verifyJWT(expectedRole string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tokenString := c.GetHeader("Authorization")
+		if tokenString == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header missing"})
+			c.Abort()
+			return
+		}
 
-	//    /user subroutes
-	userRouter.HandleFunc("/signup", UserSignup).Methods("POST")
-	userRouter.HandleFunc("/login", UserLogin).Methods("POST")
-	userRouter.HandleFunc("/courses", SeeAllCourse).Methods("GET")
-	userRouter.HandleFunc("/purchase", PurchaseCourse).Methods("POST")
-	userRouter.HandleFunc("/purchases-courses", SeeAllPurchasesCourse).Methods("GET")
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return jwtSecret, nil
+		})
 
-	adminRouter := router.PathPrefix("/admin").Subrouter() // admin sub-router
+		if err != nil || !token.Valid {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			c.Abort()
+			return
+		}
 
-	//   /admin subroutes
-	adminRouter.HandleFunc("/signup", AdminSignup).Methods("POST")
-	adminRouter.HandleFunc("/login", AdminLogin).Methods("POST")
-	adminRouter.HandleFunc("/create", CreateCourse).Methods("POST")
-	adminRouter.HandleFunc("/delete", DeleteCourse).Methods("DELETE")
-	adminRouter.HandleFunc("/add", AddCourseContent).Methods("POST")
+		if claims, ok := token.Claims.(jwt.MapClaims); ok {
+			role := claims["role"].(string)
+			if role != expectedRole {
+				c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions"})
+				c.Abort()
+				return
+			}
+		} else {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
+			c.Abort()
+			return
+		}
 
-	fmt.Println("Starting the server at port 8080")
-	err = http.ListenAndServe(":8080", router)
-	if err != nil {
-		log.Fatalf("Error while starting the server")
+		c.Next()
 	}
 }
 
 // User Handlers
-func UserSignup(w http.ResponseWriter, r *http.Request) {
-	// creating instance of the User struct
+func UserSignup(c *gin.Context) {
 	var user User
-
-	// decoding the JSON values from the client side in the form of user struct defined above
-	err := json.NewDecoder(r.Body).Decode(&user)
-	if err != nil {
-		http.Error(w, "Invalid input", http.StatusBadRequest)
-	}
-
-	// validating the values of the user struct according to the validation constraints provided in the struct
-	err = validate.Struct(user)
-	if err != nil {
-		for _, err := range err.(validator.ValidationErrors) {
-			http.Error(w, fmt.Sprintf("Error happened: %v", err), http.StatusBadRequest)
-		}
+	if err := c.ShouldBindJSON(&user); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
 
-	// Hashing the user inputted password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
 	if err != nil {
-		http.Error(w, "Error creating user", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating user"})
 		return
 	}
 
-	// Input validated user into the database
-	query := `INSERT INTO users(username,email,password_hash) VALUES ($1,$2,$3)`
-	_, err = db.Exec(query, user.Email, user.Username, hashedPassword)
+	query := `INSERT INTO users(username, email, password_hash) VALUES ($1, $2, $3)`
+	_, err = db.Exec(query, user.Username, user.Email, hashedPassword)
 	if err != nil {
-		http.Error(w, "Error inserting user", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error inserting user"})
+		return
 	}
-	fmt.Fprintln(w, "User signed successfully")
 
-	// generate JWT token after successful signup
 	token, err := GenerateJWT(user.Username, "user")
 	if err != nil {
-		http.Error(w, "Error generating JWT", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating JWT"})
+		return
 	}
 
-	// Encode the JWT token and send it to the client side for further future authentication
-	json.NewEncoder(w).Encode(map[string]string{"token": token})
+	c.JSON(http.StatusOK, gin.H{"message": "User signed up successfully", "token": token})
+}
 
+func UserLogin(c *gin.Context) {
+	// Your login logic here
+	c.JSON(http.StatusOK, gin.H{"message": "User Login"})
 }
-func UserLogin(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "User Login")
+
+func SeeAllCourse(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"message": "Courses"})
 }
-func SeeAllCourse(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "Courses")
+
+func PurchaseCourse(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"message": "Buy from these"})
 }
-func PurchaseCourse(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "Buy from these")
-}
-func SeeAllPurchasesCourse(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "Your Purchased Courses")
+
+func SeeAllPurchasesCourse(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"message": "Your Purchased Courses"})
 }
 
 // Admin Handlers
-func AdminSignup(w http.ResponseWriter, r *http.Request) {
-	// creating instance of Admin struct
+func AdminSignup(c *gin.Context) {
 	var admin Admin
-
-	// Decoding the JSON values from client side in the form of admin struct defined above
-	err := json.NewDecoder(r.Body).Decode(&admin)
-	if err != nil {
-		http.Error(w, "Error", http.StatusBadRequest)
-	}
-
-	// validating the admin struct based on the validation constraints provided in the struct
-	err = validate.Struct(admin)
-	if err != nil {
-		for _, err := range err.(validator.ValidationErrors) {
-			http.Error(w, fmt.Sprintf("Invalid input: %s", err), http.StatusBadRequest)
-		}
+	if err := c.ShouldBindJSON(&admin); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 		return
 	}
 
-	// hashing the password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(admin.Password), bcrypt.DefaultCost)
 	if err != nil {
-		http.Error(w, "Error hashing password", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error hashing password"})
 		return
 	}
 
-	// inserting validated admin in the database
-	query := `INSERT INTO admin(username,email,password_hash) VALUES($1,$2,$3)`
+	query := `INSERT INTO admin(username, email, password_hash) VALUES($1, $2, $3)`
 	_, err = db.Exec(query, admin.Username, admin.Email, hashedPassword)
 	if err != nil {
-		http.Error(w, "Error inserting user", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error inserting admin"})
 		return
 	}
-	fmt.Fprintln(w, "Admin signed up successfully")
 
 	token, err := GenerateJWT(admin.Username, "admin")
 	if err != nil {
-		http.Error(w, "Error generating jwt", http.StatusInternalServerError)
-	}
-	json.NewEncoder(w).Encode(map[string]string{"token": token})
-}
-func AdminLogin(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "Admin Login")
-}
-func CreateCourse(w http.ResponseWriter, r *http.Request) {
-	// creating instance of Course struct
-	var course Course
-
-	// decoding JSON values from the client side in the form of course struct defined above
-	err := json.NewDecoder(r.Body).Decode(&course)
-	if err != nil {
-		http.Error(w, "Error while decoding", http.StatusBadRequest)
-	}
-
-	// validating values of course struct based on validation constrainsts provided in the same struct
-	err = validate.Struct(course)
-	if err != nil {
-		for _, err := range err.(validator.ValidationErrors) {
-			http.Error(w, fmt.Sprintf("Validation error:%v", err), http.StatusInternalServerError)
-			return
-		}
-	}
-
-	// inserting validated course in the database
-	query := `INSERT INTO courses(title,description,image_link,admin_id) VALUES($1,$2,$3,$4)`    // creating the SQL query
-	_, err = db.Exec(query, course.Title, course.Description, course.Image_link, course.AdminID) // executing SQL query with db.Exec()
-	if err != nil {
-		http.Error(w, "Error inserting user", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating JWT"})
 		return
 	}
-	fmt.Sprintln("Course created successfully")
-}
-func DeleteCourse(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "Course Deleted")
-}
-func AddCourseContent(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "Course Content Added")
+
+	c.JSON(http.StatusOK, gin.H{"message": "Admin signed up successfully", "token": token})
 }
 
+func AdminLogin(c *gin.Context) {
+	// Your login logic here
+	c.JSON(http.StatusOK, gin.H{"message": "Admin Login"})
+}
+
+func CreateCourse(c *gin.Context) {
+	var course Course
+	if err := c.ShouldBindJSON(&course); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	query := `INSERT INTO courses(title, description, image_link, admin_id) VALUES($1, $2, $3, $4)`
+	_, err := db.Exec(query, course.Title, course.Description, course.ImageLink, course.AdminID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error inserting course"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Course created successfully"})
+}
+
+func DeleteCourse(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"message": "Delete Course"})
+}
+
+func AddCourseContent(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"message": "Add Content to Course"})
+}
+
+// JWT Generation function
 func GenerateJWT(username, role string) (string, error) {
-	claims := jwt.MapClaims{
+	expirationTime := time.Now().Add(1 * time.Hour)
+	claims := &jwt.MapClaims{
 		"username": username,
 		"role":     role,
-		"exp":      time.Now().Add(time.Hour * 72).Unix(),
+		"exp":      expirationTime.Unix(),
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString(jwtSecret)
-	if err != nil {
-		return "", err
-	}
-	return tokenString, nil
-}
 
-func verifyJWT() {
-	// do thi tomorrow
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(jwtSecret)
 }
