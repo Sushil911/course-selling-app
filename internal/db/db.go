@@ -20,16 +20,16 @@ func InitDB() (*sql.DB, error) {
 		os.Getenv("DB_PASSWORD"),
 		os.Getenv("DB_NAME"),
 	)
-
-	db, err := sql.Open("postgres", connStr)
+	var err error
+	DB, err = sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, err
 	}
 
-	if err = db.Ping(); err != nil {
+	if err = DB.Ping(); err != nil {
 		return nil, err
 	}
 
 	fmt.Println("Successfully connected to the database")
-	return db, nil
+	return DB, nil
 }

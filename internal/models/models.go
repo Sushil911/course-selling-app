@@ -1,15 +1,31 @@
 package models
 
-type User struct {
+type SignupUser struct {
 	Username string `json:"username" validate:"required,min=3,max=255"`
 	Password string `json:"password" validate:"required,min=8"`
 	Email    string `json:"email" validate:"required,email"`
 }
 
-type Admin struct {
+type LoginUser struct {
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required,min=8"`
+}
+
+type DatabaseInfo struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	Username string `json:"username"`
+}
+
+type SignupAdmin struct {
 	Username string `json:"username" validate:"required,min=3,max=255"`
 	Password string `json:"password" validate:"required,min=8"`
 	Email    string `json:"email" validate:"required,email"`
+}
+
+type LoginAdmin struct {
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required,min=8"`
 }
 
 type Course struct {

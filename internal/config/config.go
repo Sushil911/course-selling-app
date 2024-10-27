@@ -1,6 +1,9 @@
 package config
 
 import (
+	"course-selling-app/internal/db"
+	"course-selling-app/internal/models"
+	"database/sql"
 	"os"
 	"time"
 
@@ -12,7 +15,7 @@ var JWTSecret []byte
 
 // LoadEnv loads environment variables
 func LoadEnv() error {
-	if err := godotenv.Load(); err != nil {
+	if err := godotenv.Load("/mnt/c/Users/Acer/Desktop/course-selling-app/.env"); err != nil {
 		return err
 	}
 	JWTSecret = []byte(os.Getenv("JWT_SECRET"))
@@ -29,4 +32,21 @@ func GenerateJWT(username, role string) (string, error) {
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(JWTSecret)
+}
+
+func EmailExists(email string) (bool, *models.DatabaseInfo, error) {
+	query := `SELECT email,password_hash,username FROM users WHERE email=$1`
+	var user models.DatabaseInfo
+	err := db.DB.QueryRow(query, email).Scan(&user.Email, &user.Password, &user.Username)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil, nil
+		}
+		return false, nil, nil
+	}
+	return true, &user, nil
+}
+
+func HashPassword() {
+
 }
