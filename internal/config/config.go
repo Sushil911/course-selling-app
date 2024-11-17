@@ -34,6 +34,7 @@ func GenerateJWT(username, role string) (string, error) {
 	return token.SignedString(JWTSecret)
 }
 
+// function to check if the email already exists or not during login
 func EmailExists(email string) (bool, *models.DatabaseInfo, error) {
 	query := `SELECT email,password_hash,username FROM users WHERE email=$1`
 	var user models.DatabaseInfo
@@ -45,8 +46,4 @@ func EmailExists(email string) (bool, *models.DatabaseInfo, error) {
 		return false, nil, nil
 	}
 	return true, &user, nil
-}
-
-func HashPassword() {
-
 }
