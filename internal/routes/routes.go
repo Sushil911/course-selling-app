@@ -7,7 +7,6 @@ import (
 )
 
 func RegisterRoutes(c *echo.Echo) {
-	// user handlers
 	userGroup := c.Group("/user")
 	userGroup.POST("/signup", handlers.HandleUserSignup)
 	userGroup.POST("/login", handlers.HandleUserLogin)
@@ -18,7 +17,7 @@ func RegisterRoutes(c *echo.Echo) {
 	adminGroup := c.Group("/admin")
 	adminGroup.POST("/signup", handlers.HandleAdminSignup)
 	adminGroup.POST("/login", handlers.HandleAdminLogin)
-	adminGroup.POST("/create-course", handlers.HandleCreateCourse)
-	adminGroup.DELETE("/delete-course", handlers.HandleDeleteCourse)
-	adminGroup.POST("/add-course-content", handlers.HandleAddCourseContent)
+	adminGroup.POST("create-course", handlers.HandleCreateCourse)
+	adminGroup.POST("delete-course", handlers.HandleDeleteCourse)
+	adminGroup.POST("add-course-content", handlers.HandleAddCourseContent)
 }
